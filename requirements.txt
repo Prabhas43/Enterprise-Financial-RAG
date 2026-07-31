@@ -6,5 +6,7 @@ llama-index-vector-stores-qdrant
 llama-index-embeddings-fastembed
 llama-index-llms-groq
 llama-index-postprocessor-sbert-rerank
+torch --extra-index-url https://download.pytorch.org/whl/cpu
+sentence-transformers
 tf-keras
 protobuf
