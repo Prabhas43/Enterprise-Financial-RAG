@@ -1,0 +1,10 @@
+streamlit
+qdrant-client
+fastembed
+llama-index
+llama-index-vector-stores-qdrant
+llama-index-embeddings-fastembed
+llama-index-llms-groq
+llama-index-postprocessor-sbert-rerank
+tf-keras
+protobuf
