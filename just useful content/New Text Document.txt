@@ -1,0 +1,3 @@
+Enterprise Financial RAG System (SEC 10-K Document Assistant) name
+api https://console.groq.com/keys
+https://share.gemini.google/uXL9ADok4trS

@@ -1,0 +1,5 @@
+# Ignore raw data files and vector database
+data/
+qdrant_db/
+*.csv
+__pycache__/
