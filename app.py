@@ -14,23 +14,30 @@ from llama_index.core.tools import QueryEngineTool
 # Bypass TF warnings
 os.environ["USE_TF"] = "0"
 
-# 1. Free Local Embeddings
-Settings.embed_model = FastEmbedEmbedding(model_name="BAAI/bge-small-en-v1.5")
-
 # Page Configuration
 st.set_page_config(page_title="Enterprise Guardrailed RAG", page_icon="🛡️", layout="wide")
-st.title(" 🛡️ Enterprise Financial RAG (Guardrails & Citations)")
+st.title("🛡️ Enterprise Financial RAG (Guardrails & Citations)")
 st.caption("Agentic Routing + Anti-Hallucination Guardrails + Detailed Metadata Attribution")
 
-# Sidebar for Free Groq API Key
+# 1. Automatic Streamlit Secrets & Environment Configuration
+api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+
 with st.sidebar:
     st.header("Configuration")
-    groq_api_key = st.text_input("Groq API Key (Free)", type="password")
-    if groq_api_key:
-        os.environ["GROQ_API_KEY"] = groq_api_key
-        Settings.llm = Groq(model="llama-3.1-8b-instant", api_key=groq_api_key)
+    if not api_key:
+        api_key = st.text_input("Groq API Key (Free)", type="password")
 
-# 2. Define General Chat fallback engine
+if api_key:
+    os.environ["GROQ_API_KEY"] = api_key
+    Settings.llm = Groq(model="llama-3.1-8b-instant", api_key=api_key)
+else:
+    st.warning("⚠️ Please configure your GROQ_API_KEY in Streamlit Secrets or enter it in the sidebar to proceed.")
+    st.stop()
+
+# 2. Free Local Embeddings
+Settings.embed_model = FastEmbedEmbedding(model_name="BAAI/bge-small-en-v1.5")
+
+# 3. Define General Chat fallback engine
 class GeneralChatEngine(CustomQueryEngine):
     def custom_query(self, query_str: str):
         llm = Settings.llm
@@ -39,7 +46,7 @@ class GeneralChatEngine(CustomQueryEngine):
         )
         return str(response)
 
-# 3. Custom System Prompt (Strict Guardrail Template)
+# 4. Custom System Prompt (Strict Guardrail Template)
 GUARDRAIL_PROMPT_TMPL = (
     "Context information is provided below:\n"
     "---------------------\n"
@@ -58,7 +65,7 @@ GUARDRAIL_PROMPT_TMPL = (
 # Cached Router Engine setup
 @st.cache_resource
 def load_rag_engine():
-    # A. Connect to Qdrant
+    # A. Connect to Qdrant Vector Store
     client = QdrantClient(path="./qdrant_db")
     vector_store = QdrantVectorStore(
         client=client, 
@@ -84,7 +91,7 @@ def load_rag_engine():
     guardrail_prompt = PromptTemplate(GUARDRAIL_PROMPT_TMPL)
     doc_query_engine.update_prompts({"response_synthesizer:text_qa_template": guardrail_prompt})
 
-    # C. Wrap Engines into Tools
+    # C. Wrap Engines into Query Engine Tools
     doc_tool = QueryEngineTool.from_defaults(
         query_engine=doc_query_engine,
         description=(
@@ -101,17 +108,13 @@ def load_rag_engine():
         )
     )
 
-    # D. Router Engine
+    # D. Router Engine Initialization
     router_engine = RouterQueryEngine(
         selector=PydanticSingleSelector.from_defaults(),
         query_engine_tools=[doc_tool, general_tool]
     )
 
     return router_engine
-
-if not os.getenv("GROQ_API_KEY"):
-    st.warning(" Please enter your Free Groq API Key in the sidebar to start.")
-    st.stop()
 
 try:
     query_engine = load_rag_engine()
@@ -120,14 +123,16 @@ except Exception as e:
     st.error(f"Error loading Vector Store: {e}")
     st.stop()
 
-# Chat interface setup
+# Chat Interface Setup
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Display prior chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# User Prompt Handling
 if prompt := st.chat_input("Ask a financial question or greeting..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -136,16 +141,23 @@ if prompt := st.chat_input("Ask a financial question or greeting..."):
     with st.chat_message("assistant"):
         with st.spinner("Applying Guardrails & Synthesizing Answer..."):
             response = query_engine.query(prompt)
-            st.markdown(response.response)
+            
+            # Extract raw response string
+            resp_text = str(response.response) if hasattr(response, "response") else str(response)
+            st.markdown(resp_text)
 
-            # Display Metadata & Citation Details
-            if hasattr(response, "source_nodes") and response.source_nodes:
-                with st.expander(" Source Citations & Metadata Attribution"):
-                    for idx, node in enumerate(response.source_nodes, 1):
-                        meta = node.node.metadata
-                        file_name = meta.get("file_name", "Unknown File")
-                        st.markdown(f"**Citation {idx}** | **Source File:** `{file_name}` | **Relevance Score:** `{node.score:.4f}`")
-                        st.caption(f"**Retrieved Passages:** {node.node.get_text()[:400]}...")
+            # Display Metadata & Citation Details (If retrieved from Document Engine)
+            source_nodes = getattr(response, "source_nodes", None)
+            if source_nodes:
+                with st.expander("📌 Source Citations & Metadata Attribution"):
+                    for idx, node in enumerate(source_nodes, 1):
+                        meta = node.node.metadata if hasattr(node, "node") else {}
+                        file_name = meta.get("file_name", "SEC_Filing.html")
+                        score = getattr(node, "score", 0.0) or 0.0
+                        text_snippet = node.node.get_text()[:400] if hasattr(node, "node") else ""
+                        
+                        st.markdown(f"**Citation {idx}** | **Source File:** `{file_name}` | **Relevance Score:** `{score:.4f}`")
+                        st.caption(f"**Retrieved Passages:** {text_snippet}...")
                         st.divider()
 
-    st.session_state.messages.append({"role": "assistant", "content": str(response.response)})
+    st.session_state.messages.append({"role": "assistant", "content": resp_text})
